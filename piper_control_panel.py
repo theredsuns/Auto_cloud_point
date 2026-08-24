@@ -269,7 +269,7 @@ class PiperPanel(tk.Tk):
         saved_settings = self._load_control_settings()
         self.vehicle_position_tolerance = tk.DoubleVar(value=saved_settings.get("vehicle_position_tolerance_cm", 0.5))
         self.vehicle_yaw_tolerance = tk.DoubleVar(value=saved_settings.get("vehicle_yaw_tolerance_deg", 0.5))
-        self.no_target_wait_s = tk.DoubleVar(value=saved_settings.get("no_target_wait_s", 1.0))
+        self.no_target_wait_s = tk.DoubleVar(value=saved_settings.get("no_target_wait_s", 0.2))
         self.min_target_confidence = tk.DoubleVar(value=saved_settings.get("min_target_confidence_pct", 50.0))
         self.capture_settle_s = tk.DoubleVar(value=saved_settings.get("capture_settle_s", 2.0))
         self.tracer.set_tolerances(self.vehicle_position_tolerance.get(), self.vehicle_yaw_tolerance.get())
@@ -341,7 +341,7 @@ class PiperPanel(tk.Tk):
         # This plain value is deliberately read by capture workers. Tk
         # variables must only ever be accessed by Tk's main thread.
         self._no_target_skip_active = True
-        self._no_target_wait_s_active = 1.0
+        self._no_target_wait_s_active = 0.2
         self._min_target_confidence_active = 0.50
         self._capture_settle_s_active = 2.0
         # The capture worker must not send an arm command until Tk has
@@ -1591,7 +1591,7 @@ class PiperPanel(tk.Tk):
                 data = json.load(handle)
             position = float(data.get("vehicle_position_tolerance_cm", 0.5))
             yaw = float(data.get("vehicle_yaw_tolerance_deg", 0.5))
-            wait_s = float(data.get("no_target_wait_s", 1.0))
+            wait_s = float(data.get("no_target_wait_s", 0.2))
             confidence_pct = float(data.get("min_target_confidence_pct", 50.0))
             settle_s = float(data.get("capture_settle_s", 2.0))
             return {
@@ -2037,16 +2037,13 @@ class PiperPanel(tk.Tk):
         if bgr is not None:
             self._show_auto_camera(bgr, depth, message)
 
-    def _save_non_target_capture(self, bgr, depth, sequence_index, reason):
+    def _save_non_target_capture(self, bgr, _depth, sequence_index, reason):
         """Persist an empty view outside the ICP input directories."""
         scan = self._ensure_capture_scan()
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         image_dir = scan / "non_targets" / "images"
-        depth_dir = scan / "non_targets" / "depth"
         image_dir.mkdir(parents=True, exist_ok=True)
-        depth_dir.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(image_dir / f"{stamp}.jpg"), bgr)
-        np.save(depth_dir / f"{stamp}_depth.npy", depth)
         with (scan / "non_targets.jsonl").open("a", encoding="utf-8") as manifest:
             manifest.write(json.dumps({
                 "id": stamp, "sequence_index": sequence_index,
@@ -2069,9 +2066,20 @@ class PiperPanel(tk.Tk):
             self._show_auto_camera(bgr, depth, f"位置 {sequence_index}：正在自动识别")
             box, yolo_points, yolo_labels, yolo_details = module.yolo_object_prompt(self.capture_detector, bgr)
             best_confidence = max((float(detail[1]) for detail in yolo_details), default=0.0)
-            target_ok = box is not None and best_confidence >= self._min_target_confidence_active
-            if target_ok:
+            if box is not None and best_confidence >= self._min_target_confidence_active:
                 break
+            if box is not None:
+                if not self._no_target_skip_active:
+                    self.auto_capture_failed = True
+                    self.after(0, lambda: self.status.set("自动抓拍识别度低于要求，已停止后续运动。"))
+                    return False
+                stamp = self._save_non_target_capture(
+                    bgr, depth, sequence_index, "confidence_below_threshold"
+                )
+                self.after(0, lambda i=sequence_index, s=stamp, confidence=best_confidence: self.status.set(
+                    f"位置 {i}：识别度 {confidence:.0%} 低于要求，已仅保存图片 {s}（未融合），立即继续下一步。"
+                ))
+                return True
             if not self._no_target_skip_active:
                 self.auto_capture_failed = True
                 self.after(0, lambda: self.status.set("自动抓拍未识别到 body/wing，未保存该帧并已停止后续运动。"))
