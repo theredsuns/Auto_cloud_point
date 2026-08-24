@@ -253,8 +253,8 @@ class PiperPanel(tk.Tk):
         self.title("PiPER-L 远程控制（受限低速）")
         self.tk.call("tk", "scaling", 1.0)
         self.resizable(True, True)
-        self.geometry("1140x700")
-        self.minsize(1040, 650)
+        self.geometry("1240x900")
+        self.minsize(1040, 760)
         self.current = [None] * 6
         # Wi-Fi client isolation prevents direct DDS to the laptop.  Reuse
         # the SSH vehicle bridge inside this same Tk window.
@@ -820,15 +820,15 @@ class PiperPanel(tk.Tk):
         ttk.Label(outer, textvariable=self.camera_pose, foreground="#4e6f30", wraplength=680).grid(row=4, column=0, columnspan=5, pady=(0, 8), sticky="w")
         ttk.Button(outer, text="重设小车初始坐标", command=self.reset_camera_origin).grid(row=4, column=5, padx=4, pady=(0, 8))
         ttk.Label(outer, text="末端控制（相对机械臂底座的标定 TCP；XYZ:mm，RPY:°）", font=("Sans", 10, "bold")).grid(row=5, column=0, columnspan=6, sticky="w", pady=(0, 3))
-        motion_pages = ttk.Notebook(outer, width=820, height=230)
+        motion_pages = ttk.Notebook(outer, width=980, height=360)
         motion_pages.grid(row=6, column=0, columnspan=6, sticky="nsew", pady=(0, 6))
-        discrete_page = ttk.Frame(motion_pages, padding=20, width=800, height=255)
-        continuous_page = ttk.Frame(motion_pages, padding=20, width=800, height=255)
-        routine_page = ttk.Frame(motion_pages, padding=20, width=800, height=255)
-        vehicle_page = ttk.Frame(motion_pages, padding=6, width=800, height=205)
-        auto_plan_page = ttk.Frame(motion_pages, padding=8, width=800, height=225)
-        # Let every tab grow/shrink with the main UI instead of retaining its
-        # old fixed 255 px design height.
+        discrete_page = ttk.Frame(motion_pages, padding=20)
+        continuous_page = ttk.Frame(motion_pages, padding=20)
+        routine_page = ttk.Frame(motion_pages, padding=20)
+        vehicle_page = ttk.Frame(motion_pages, padding=6)
+        auto_plan_page = ttk.Frame(motion_pages, padding=8)
+        # Pages inherit the notebook's available area and grow with the main
+        # window; no tab has a fixed pixel height.
         motion_pages.add(discrete_page, text="间断运动（输入后发送）")
         motion_pages.add(continuous_page, text="连续运动（滑块 / +/- 直接执行）")
         motion_pages.add(routine_page, text="规则运动（记录位置）")
@@ -999,7 +999,7 @@ class PiperPanel(tk.Tk):
             foreground="#555555", wraplength=760,
         ).pack(anchor="w", pady=(2, 5))
         self.auto_capture_plan_tree = ttk.Treeview(
-            page, columns=("step", "action", "detail"), show="headings", height=6
+            page, columns=("step", "action", "detail"), show="headings", height=10
         )
         for key, text, width in (("step", "步骤", 75), ("action", "动作", 150), ("detail", "记录来源 / 目标", 520)):
             self.auto_capture_plan_tree.heading(key, text=text)
