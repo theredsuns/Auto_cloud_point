@@ -8,6 +8,7 @@ import socket
 import subprocess
 import threading
 import time
+import queue
 import tkinter as tk
 import argparse
 import os
@@ -336,6 +337,10 @@ class PiperPanel(tk.Tk):
         self.auto_camera_display_frame = None
         self.auto_capture_popup = None
         self.auto_capture_popup_photo = None
+        self.fusion_queue: queue.Queue[tuple[Path, str, int] | None] = queue.Queue()
+        self.fusion_worker = None
+        self.fusion_pending = 0
+        self.fusion_lock = threading.Lock()
         self.auto_capture_failed = False
         self.capture_detection_info = tk.StringVar(
             value="抓拍设置：识别度≥50%，无目标等待 0.2 s，抓拍停顿 2.0 s"
@@ -1246,9 +1251,9 @@ class PiperPanel(tk.Tk):
             )
             result = self.run_remote(home)
             if result.returncode or not self._wait_for_home_joint_pose(timeout_s=70.0):
-                self.after(0, lambda: self.status.set("规划已完成、点云已保存，但机械臂复位未确认；ZED 保持开启。"))
+                self.after(0, lambda: self.status.set("规划拍摄已完成、点云正在后台融合，但机械臂复位未确认；ZED 保持开启。"))
                 return
-            self.after(0, lambda: self.status.set(f"自动抓拍规划完成：已抓拍 {captures} 帧并融合点云，机械臂已回到初始零位。"))
+            self.after(0, lambda: self.status.set(f"自动抓拍规划完成：已抓拍 {captures} 帧，点云继续后台融合；机械臂已回到初始零位。"))
         except Exception as error:
             self.auto_capture_failed = True
             self.after(0, lambda: self.status.set(f"自动抓拍规划失败：{error}"))
@@ -1533,7 +1538,7 @@ class PiperPanel(tk.Tk):
                 self.after(0, lambda: self.status.set("抓拍已完成，但机械臂复位未确认；ZED 将保持开启。"))
                 return
             self.after(0, lambda n=capture_index: self.status.set(
-                f"小车-机械臂联动抓拍完成：已保存并融合 {n} 帧点云，机械臂已回到初始零位。"
+                f"小车-机械臂联动抓拍完成：已保存 {n} 帧，点云继续后台融合；机械臂已回到初始零位。"
             ))
         except Exception as error:
             self.auto_capture_failed = True
@@ -2118,6 +2123,51 @@ class PiperPanel(tk.Tk):
             }, ensure_ascii=False) + "\n")
         return stamp
 
+    def _enqueue_fusion(self, scan, stamp, sequence_index):
+        """Fuse frames serially in the background so motion never waits on ICP."""
+        with self.fusion_lock:
+            self.fusion_pending += 1
+            pending = self.fusion_pending
+            if self.fusion_worker is None or not self.fusion_worker.is_alive():
+                self.fusion_worker = threading.Thread(target=self._fusion_worker_loop, daemon=True)
+                self.fusion_worker.start()
+        self.fusion_queue.put((Path(scan), stamp, sequence_index))
+        self._set_auto_capture_phase(f"点云融合后台队列：等待 {pending} 帧")
+        self.after(0, lambda i=sequence_index, count=pending: self.status.set(
+            f"位置 {i}：图片/掩码已保存，点云与 ICP 已转入后台队列（{count} 帧待处理）；继续下一步。"
+        ))
+        self.after(0, self._close_auto_capture_popup)
+
+    def _fusion_worker_loop(self):
+        while True:
+            task = self.fusion_queue.get()
+            if task is None:
+                return
+            scan, stamp, sequence_index = task
+            self._set_auto_capture_phase(f"后台点云生成与 ICP 融合：第 {sequence_index} 帧")
+            result = subprocess.run(
+                [sys.executable, str(ONLINE_SCAN_ROOT / "online_icp_pipeline.py"), str(scan), stamp],
+                text=True, capture_output=True,
+            )
+            if result.returncode:
+                detail = (result.stderr or result.stdout).strip()[-500:]
+                self.after(0, lambda i=sequence_index, message=detail: self.status.set(
+                    f"位置 {i}：后台点云融合失败：{message}"
+                ))
+            else:
+                message = self._fusion_message(scan, stamp)
+                self.after(0, lambda i=sequence_index, text=message: self.status.set(
+                    f"位置 {i}：后台融合完成；{text}"
+                ))
+                self.after(0, lambda value=scan: self._start_auto_cloud_viewer(value))
+            with self.fusion_lock:
+                self.fusion_pending = max(0, self.fusion_pending - 1)
+                pending = self.fusion_pending
+            self._set_auto_capture_phase(
+                "后台融合空闲" if not pending else f"后台点云融合：剩余 {pending} 帧"
+            )
+            self.fusion_queue.task_done()
+
     def _capture_auto_frame(self, sequence_index):
         """Capture a target frame, or record a non-target view and continue."""
         module = self.capture_module
@@ -2216,25 +2266,7 @@ class PiperPanel(tk.Tk):
                 "pose_source": "calibrated_tcp" if tcp else "unavailable",
                 "world_from_camera": tcp["world_from_camera"] if tcp else None,
                 "calibrated_tcp": tcp}, ensure_ascii=False) + "\n")
-        self._set_auto_capture_phase("点云生成与 ICP 融合")
-        result = subprocess.run(
-            [sys.executable, str(ONLINE_SCAN_ROOT / "online_icp_pipeline.py"), str(scan), stamp],
-            text=True, capture_output=True,
-        )
-        if result.returncode:
-            detail = (result.stderr or result.stdout).strip()[-500:]
-            self.auto_capture_failed = True
-            self.after(0, lambda: self.status.set(f"点云生成失败：{detail}"))
-            self.after(0, self._close_auto_capture_popup)
-            return False
-        fusion_message = self._fusion_message(scan, stamp)
-        self.after(0, lambda message=fusion_message: self.status.set(f"位置 {sequence_index}：{message}"))
-        # The viewer is deliberately started after the first fused file is
-        # present. Starting an empty Open3D viewer could make it exit before
-        # the first capture arrived.
-        self.after(0, lambda: self._start_auto_cloud_viewer(scan))
-        self._set_auto_capture_phase("该帧已完成")
-        self.after(0, self._close_auto_capture_popup)
+        self._enqueue_fusion(scan, stamp, sequence_index)
         return True
 
     def _run_all_with_auto_capture_worker(self):
@@ -2279,7 +2311,7 @@ class PiperPanel(tk.Tk):
                 return
             self._close_auto_capture_views()
             self.after(0, lambda: self.status.set(
-                "自动抓拍规则运动完成：点云文件已保存，机械臂已恢复初始零位，显示窗口已关闭。"
+                "自动抓拍规则运动完成：图片已保存，点云继续后台融合；机械臂已恢复初始零位。"
             ))
         except Exception as error:
             self.auto_capture_failed = True
