@@ -1007,26 +1007,28 @@ class PiperPanel(tk.Tk):
 
     def _build_auto_capture_plan_page(self, page):
         """One sortable queue composed from existing arm and vehicle records."""
-        ttk.Label(page, text="自动抓拍规划", font=("Sans", 11, "bold")).pack(anchor="w")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(2, weight=1)
+        ttk.Label(page, text="自动抓拍规划", font=("Sans", 11, "bold")).grid(row=0, column=0, sticky="w")
         ttk.Label(
             page,
             text="不在这里重复录入坐标。点击“生成规划”后，已有的机械臂相机位置和小车路径点会加入同一队列；可上移/下移调整执行顺序。相机步骤到位后自动抓拍并融合点云。",
             foreground="#555555", wraplength=760,
-        ).pack(anchor="w", pady=(2, 5))
+        ).grid(row=1, column=0, sticky="w", pady=(2, 5))
         self.auto_capture_plan_tree = ttk.Treeview(
             page, columns=("step", "action", "detail"), show="headings", height=10
         )
         for key, text, width in (("step", "步骤", 75), ("action", "动作", 150), ("detail", "记录来源 / 目标", 520)):
             self.auto_capture_plan_tree.heading(key, text=text)
             self.auto_capture_plan_tree.column(key, width=width, anchor="center" if key != "detail" else "w")
-        self.auto_capture_plan_tree.pack(fill="both", expand=True, pady=(0, 6))
-        row = ttk.Frame(page); row.pack(fill="x")
+        self.auto_capture_plan_tree.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        row = ttk.Frame(page); row.grid(row=3, column=0, sticky="ew")
         ttk.Button(row, text="从已有记录生成规划", command=self._generate_auto_capture_plan).pack(side="left", fill="x", expand=True, padx=(0, 3))
         ttk.Button(row, text="上移选中步骤", command=lambda: self._move_auto_capture_plan(-1)).pack(side="left", fill="x", expand=True, padx=3)
         ttk.Button(row, text="下移选中步骤", command=lambda: self._move_auto_capture_plan(1)).pack(side="left", fill="x", expand=True, padx=3)
         ttk.Button(row, text="复制选中步骤", command=self._duplicate_auto_capture_plan_step).pack(side="left", fill="x", expand=True, padx=3)
         ttk.Button(row, text="移除选中步骤", command=self._remove_auto_capture_plan_step).pack(side="left", fill="x", expand=True, padx=(3, 0))
-        saved = ttk.Frame(page); saved.pack(fill="x", pady=(5, 0))
+        saved = ttk.Frame(page); saved.grid(row=4, column=0, sticky="ew", pady=(5, 0))
         ttk.Label(saved, text="规划名称：").pack(side="left")
         ttk.Entry(saved, textvariable=self.auto_capture_plan_name, width=18).pack(side="left", padx=(0, 4))
         ttk.Button(saved, text="保存规划", command=self._save_named_auto_capture_plan).pack(side="left", padx=(0, 8))
@@ -1039,7 +1041,9 @@ class PiperPanel(tk.Tk):
         ttk.Button(saved, text="加载规划", command=self._load_named_auto_capture_plan).pack(side="left", padx=2)
         ttk.Button(saved, text="删除保存", command=self._delete_named_auto_capture_plan).pack(side="left", padx=(2, 0))
         self._refresh_saved_auto_capture_plan_picker()
-        ttk.Button(page, text="运行规划", command=self._run_auto_capture_plan).pack(fill="x", ipady=4, pady=(6, 0))
+        ttk.Button(page, text="运行规划", command=self._run_auto_capture_plan).grid(
+            row=5, column=0, sticky="ew", ipady=4, pady=(6, 0)
+        )
 
     def _generate_auto_capture_plan(self):
         """Build the plan from the existing record pages without new input."""
