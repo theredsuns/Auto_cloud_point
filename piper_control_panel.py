@@ -340,6 +340,8 @@ class PiperPanel(tk.Tk):
         self.capture_detection_info = tk.StringVar(
             value="抓拍设置：识别度≥50%，无目标等待 0.2 s，抓拍停顿 2.0 s"
         )
+        self.auto_capture_phase_info = tk.StringVar(value="自动抓拍：待命")
+        self.capture_countdown_info = tk.StringVar(value="抓拍计时：未开始")
         # In automatic workflows, an empty view is evidence too: retain it
         # without creating a mask/point cloud, then continue the route.
         self.skip_no_target_capture = tk.BooleanVar(value=True)
@@ -441,6 +443,16 @@ class PiperPanel(tk.Tk):
             )
         except (ValueError, TypeError, OSError) as error:
             messagebox.showerror("保存抓拍设置失败", str(error), parent=self)
+
+    def _set_auto_capture_phase(self, text):
+        """Update the sidebar from either a worker or the Tk thread."""
+        self.after(0, lambda value=str(text): self.auto_capture_phase_info.set(f"自动抓拍：{value}"))
+
+    def _set_capture_countdown(self, label, remaining, total):
+        self.after(0, lambda name=str(label), left=max(0.0, remaining), duration=total:
+                   self.capture_countdown_info.set(
+                       f"{name}：剩余 {left:.1f} / {duration:.1f} s"
+                   ))
 
     def restart_camera_bridge(self):
         self.remote_camera.close()
@@ -783,6 +795,8 @@ class PiperPanel(tk.Tk):
         ttk.Separator(vehicle_summary).pack(fill="x", pady=8)
         ttk.Label(vehicle_summary, text="自动抓拍", font=("Sans", 9, "bold")).pack(anchor="w")
         ttk.Label(vehicle_summary, textvariable=self.capture_detection_info, foreground="#7a4b00", wraplength=210).pack(anchor="w", fill="x", pady=(3, 0))
+        ttk.Label(vehicle_summary, textvariable=self.auto_capture_phase_info, foreground="#204a87", wraplength=210).pack(anchor="w", fill="x", pady=(7, 0))
+        ttk.Label(vehicle_summary, textvariable=self.capture_countdown_info, foreground="#7a4b00", wraplength=210).pack(anchor="w", fill="x", pady=(3, 0))
         ttk.Label(vehicle_summary, text="当前位置每 0.5 秒刷新；详细控制在 Tracer5 小车控制页。", foreground="#666666", wraplength=210).pack(anchor="w", pady=(10, 0))
         ttk.Label(outer, textvariable=self.status, foreground="#204a87", wraplength=680).grid(row=1, column=0, columnspan=6, pady=(5, 12), sticky="w")
         settings = ttk.LabelFrame(outer, text="全局设置（速度 / 自动抓拍）", padding=(8, 5))
@@ -1201,6 +1215,7 @@ class PiperPanel(tk.Tk):
                     return
                 if step["kind"] == "camera":
                     target = list(step["pose"])
+                    self._set_auto_capture_phase(f"机械臂运动：规划步骤 {index}/{len(plan)}")
                     self.after(0, lambda i=index, n=len(plan): self.status.set(f"自动抓拍规划 {i}/{n}：机械臂正在前往相机位…"))
                     result = self.run_remote(self._cartesian_command(target))
                     # piper_safe_end_pose blocks until its CAN end-pose
@@ -1211,6 +1226,8 @@ class PiperPanel(tk.Tk):
                         return
                     deadline = time.monotonic() + self._capture_settle_s_active
                     while self.routine_running and not self.auto_capture_plan_cancelled and time.monotonic() < deadline:
+                        self._set_auto_capture_phase("机械臂到位：抓拍停顿计时")
+                        self._set_capture_countdown("抓拍停顿", deadline - time.monotonic(), self._capture_settle_s_active)
                         self._refresh_auto_camera(f"step {index}: stable 2 seconds")
                         time.sleep(0.1)
                     if not self.routine_running or self.auto_capture_plan_cancelled:
@@ -1262,6 +1279,7 @@ class PiperPanel(tk.Tk):
                             origin.y + math.sin(origin.yaw) * x + math.cos(origin.yaw) * y,
                             wrap_angle(origin.yaw + math.radians(float(record["yaw"]))))
             straight = False
+        self._set_auto_capture_phase(f"小车运动：规划点 {index}/{total}")
         ok, reason = self.tracer.start_target(target, f"规划小车点 {index}/{total}", linear, angular, straight=straight)
         if not ok:
             self.after(0, lambda r=reason: self.status.set(f"自动抓拍规划：小车目标未启动：{r}"))
@@ -1280,6 +1298,7 @@ class PiperPanel(tk.Tk):
                 return False
             if state == "idle":
                 self.vehicle_route_running = False
+                self._set_auto_capture_phase("小车已到位：继续下一步骤")
                 return True
             time.sleep(0.1)
         self.tracer.stop_all()
@@ -1450,6 +1469,7 @@ class PiperPanel(tk.Tk):
             if not self.routine_running or self.vehicle_route_cancelled or self.auto_capture_plan_cancelled:
                 return False, capture_index
             target = list(record["pose"])
+            self._set_auto_capture_phase(f"机械臂运动：{location_name} 相机位 {arm_index}/{len(arm_records)}")
             self.after(0, lambda a=arm_index, n=len(arm_records), place=location_name: self.status.set(
                 f"{place}：机械臂正在前往相机位姿 {a}/{n}…"
             ))
@@ -1461,6 +1481,8 @@ class PiperPanel(tk.Tk):
                 return False, capture_index
             deadline = time.monotonic() + self._capture_settle_s_active
             while self.routine_running and not self.vehicle_route_cancelled and time.monotonic() < deadline:
+                self._set_auto_capture_phase("机械臂到位：抓拍停顿计时")
+                self._set_capture_countdown("抓拍停顿", deadline - time.monotonic(), self._capture_settle_s_active)
                 self._refresh_auto_camera(f"{location_name}: arm view {arm_index} stable")
                 time.sleep(0.1)
             if not self.routine_running or self.vehicle_route_cancelled:
@@ -2099,6 +2121,8 @@ class PiperPanel(tk.Tk):
     def _capture_auto_frame(self, sequence_index):
         """Capture a target frame, or record a non-target view and continue."""
         module = self.capture_module
+        self._set_auto_capture_phase("拍摄并进行 YOLO 识别")
+        self._set_capture_countdown("抓拍计时", 0.0, self._capture_settle_s_active)
         no_target_deadline = time.monotonic() + self._no_target_wait_s_active
         while True:
             if not self.routine_running:
@@ -2130,6 +2154,7 @@ class PiperPanel(tk.Tk):
                 self.after(0, lambda i=sequence_index, s=stamp, confidence=best_confidence: self.status.set(
                     f"位置 {i}：识别度 {confidence:.0%} 低于要求，已仅保存图片 {s}（未融合），立即继续下一步。"
                 ))
+                self._set_auto_capture_phase("低识别度：保存图片后跳过融合")
                 self.after(0, self._close_auto_capture_popup)
                 return True
             if not self._no_target_skip_active:
@@ -2145,11 +2170,13 @@ class PiperPanel(tk.Tk):
                     f"位置 {i}：{self._no_target_wait_s_active:.1f} 秒内未发现合格目标"
                     f"（最高 {best_confidence:.0%}），已保存非目标帧 {s}（未融合），继续下一步。"
                 ))
+                self._set_auto_capture_phase("未发现目标：保存图片后跳过融合")
                 self.after(0, self._close_auto_capture_popup)
                 return True
             self.after(0, lambda i=sequence_index, seconds=max(0.0, remaining): self.status.set(
                 f"位置 {i}：目标未达到 {self._min_target_confidence_active:.0%}，继续检测（剩余 {seconds:.1f} 秒）…"
             ))
+            self._set_capture_countdown("无目标检测", remaining, self._no_target_wait_s_active)
             time.sleep(min(0.35, remaining))
         yolo_preview = bgr.copy()
         x1, y1, x2, y2 = np.round(box).astype(int)
@@ -2167,6 +2194,7 @@ class PiperPanel(tk.Tk):
             f"位置 {i}：YOLO 检测到 {', '.join(labels_text) or '目标'}，正在 SAM2 分割并生成点云…"
         ))
         self.capture_predictor.set_image(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+        self._set_auto_capture_phase("SAM2 分割")
         mask = module.sam_from_prompt(self.capture_predictor, box, yolo_points, yolo_labels)
         if int(mask.sum()) < 100:
             self.auto_capture_failed = True
@@ -2188,6 +2216,7 @@ class PiperPanel(tk.Tk):
                 "pose_source": "calibrated_tcp" if tcp else "unavailable",
                 "world_from_camera": tcp["world_from_camera"] if tcp else None,
                 "calibrated_tcp": tcp}, ensure_ascii=False) + "\n")
+        self._set_auto_capture_phase("点云生成与 ICP 融合")
         result = subprocess.run(
             [sys.executable, str(ONLINE_SCAN_ROOT / "online_icp_pipeline.py"), str(scan), stamp],
             text=True, capture_output=True,
@@ -2204,6 +2233,7 @@ class PiperPanel(tk.Tk):
         # present. Starting an empty Open3D viewer could make it exit before
         # the first capture arrived.
         self.after(0, lambda: self._start_auto_cloud_viewer(scan))
+        self._set_auto_capture_phase("该帧已完成")
         self.after(0, self._close_auto_capture_popup)
         return True
 
@@ -2215,6 +2245,7 @@ class PiperPanel(tk.Tk):
                 if not self.routine_running:
                     return
                 target = list(record["pose"])
+                self._set_auto_capture_phase(f"机械臂运动：相机位 {index}/{len(self.motion_records)}")
                 self.after(0, lambda i=index: self.status.set(f"自动抓拍 {i}/{len(self.motion_records)}：正在前往位置 {i}…"))
                 result = self.run_remote(self._cartesian_command(target))
                 if result.returncode:
@@ -2223,6 +2254,8 @@ class PiperPanel(tk.Tk):
                 self.after(0, lambda i=index, settle=self._capture_settle_s_active: self.status.set(f"位置 {i} 已到达，稳定等待 {settle:.1f} 秒…"))
                 deadline = time.monotonic() + self._capture_settle_s_active
                 while self.routine_running and time.monotonic() < deadline:
+                    self._set_auto_capture_phase("机械臂到位：抓拍停顿计时")
+                    self._set_capture_countdown("抓拍停顿", deadline - time.monotonic(), self._capture_settle_s_active)
                     self._refresh_auto_camera(f"位置 {index} 已到达，稳定等待")
                     time.sleep(.1)
                 if not self.routine_running or not self._capture_auto_frame(index):
