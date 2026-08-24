@@ -334,7 +334,12 @@ class PiperPanel(tk.Tk):
         self.auto_camera_enabled = False
         self.auto_camera_display_pending = False
         self.auto_camera_display_frame = None
+        self.auto_capture_popup = None
+        self.auto_capture_popup_photo = None
         self.auto_capture_failed = False
+        self.capture_detection_info = tk.StringVar(
+            value="抓拍设置：识别度≥50%，无目标等待 0.2 s，抓拍停顿 2.0 s"
+        )
         # In automatic workflows, an empty view is evidence too: retain it
         # without creating a mask/point cloud, then continue the route.
         self.skip_no_target_capture = tk.BooleanVar(value=True)
@@ -417,6 +422,9 @@ class PiperPanel(tk.Tk):
         self._no_target_wait_s_active = wait_s
         self._min_target_confidence_active = confidence_pct / 100.0
         self._capture_settle_s_active = settle_s
+        self.capture_detection_info.set(
+            f"设置：识别度≥{confidence_pct:.0f}%\n无目标等待 {wait_s:.1f} s；抓拍停顿 {settle_s:.1f} s"
+        )
 
     def _save_capture_detection_settings(self):
         try:
@@ -772,6 +780,9 @@ class PiperPanel(tk.Tk):
         ttk.Label(vehicle_summary, textvariable=self.vehicle_status, foreground="#204a87", wraplength=210).pack(anchor="w", fill="x")
         ttk.Separator(vehicle_summary).pack(fill="x", pady=8)
         ttk.Label(vehicle_summary, textvariable=self.vehicle_pose, foreground="#4e6f30", wraplength=210).pack(anchor="w", fill="x")
+        ttk.Separator(vehicle_summary).pack(fill="x", pady=8)
+        ttk.Label(vehicle_summary, text="自动抓拍", font=("Sans", 9, "bold")).pack(anchor="w")
+        ttk.Label(vehicle_summary, textvariable=self.capture_detection_info, foreground="#7a4b00", wraplength=210).pack(anchor="w", fill="x", pady=(3, 0))
         ttk.Label(vehicle_summary, text="当前位置每 0.5 秒刷新；详细控制在 Tracer5 小车控制页。", foreground="#666666", wraplength=210).pack(anchor="w", pady=(10, 0))
         ttk.Label(outer, textvariable=self.status, foreground="#204a87", wraplength=680).grid(row=1, column=0, columnspan=6, pady=(5, 12), sticky="w")
         settings = ttk.LabelFrame(outer, text="全局设置（速度 / 自动抓拍）", padding=(8, 5))
@@ -2030,6 +2041,40 @@ class PiperPanel(tk.Tk):
         self.camera_status.set("自动规划：RGB + Depth 预览中")
         self.auto_camera_window_drawn.set()
 
+    def _show_auto_capture_popup(self, bgr, depth, message):
+        """Show one non-blocking Tk preview for the current captured frame."""
+        self.after(0, lambda image=bgr.copy(), depth_image=depth.copy(), text=str(message):
+                   self._draw_auto_capture_popup(image, depth_image, text))
+
+    def _draw_auto_capture_popup(self, bgr, depth, message):
+        if not self.winfo_exists():
+            return
+        popup = self.auto_capture_popup
+        if popup is None or not popup.winfo_exists():
+            popup = tk.Toplevel(self)
+            popup.title("自动抓拍：当前帧（处理完成后自动关闭）")
+            popup.transient(self)
+            popup.resizable(False, False)
+            popup.label = ttk.Label(popup)
+            popup.label.pack(padx=6, pady=6)
+            self.auto_capture_popup = popup
+        shown = cv2.resize(bgr, (480, 270), interpolation=cv2.INTER_AREA)
+        depth_view = self.capture_module.depth_preview(depth, (480, 270))
+        panel = np.hstack((shown, depth_view))
+        cv2.putText(panel, str(message).encode("ascii", "ignore").decode() or "capturing",
+                    (12, 28), cv2.FONT_HERSHEY_SIMPLEX, .65, (0, 255, 255), 2, cv2.LINE_AA)
+        photo = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(panel, cv2.COLOR_BGR2RGB)))
+        self.auto_capture_popup_photo = photo
+        popup.label.configure(image=photo)
+        popup.lift()
+
+    def _close_auto_capture_popup(self):
+        popup = self.auto_capture_popup
+        self.auto_capture_popup = None
+        self.auto_capture_popup_photo = None
+        if popup is not None and popup.winfo_exists():
+            popup.destroy()
+
     def _refresh_auto_camera(self, message):
         if not self.remote_camera:
             return
@@ -2062,10 +2107,16 @@ class PiperPanel(tk.Tk):
             if bgr is None or depth is None:
                 self.auto_capture_failed = True
                 self.after(0, lambda: self.status.set("自动抓拍失败：未收到完整 RGB + 深度，已停止后续运动。"))
+                self.after(0, self._close_auto_capture_popup)
                 return False
             self._show_auto_camera(bgr, depth, f"位置 {sequence_index}：正在自动识别")
+            self._show_auto_capture_popup(bgr, depth, f"capture {sequence_index}: YOLO")
             box, yolo_points, yolo_labels, yolo_details = module.yolo_object_prompt(self.capture_detector, bgr)
             best_confidence = max((float(detail[1]) for detail in yolo_details), default=0.0)
+            self.after(0, lambda confidence=best_confidence: self.capture_detection_info.set(
+                f"本帧识别度：{confidence:.0%}（要求≥{self._min_target_confidence_active:.0%}）\n"
+                f"无目标等待 {self._no_target_wait_s_active:.1f} s；抓拍停顿 {self._capture_settle_s_active:.1f} s"
+            ))
             if box is not None and best_confidence >= self._min_target_confidence_active:
                 break
             if box is not None:
@@ -2079,10 +2130,12 @@ class PiperPanel(tk.Tk):
                 self.after(0, lambda i=sequence_index, s=stamp, confidence=best_confidence: self.status.set(
                     f"位置 {i}：识别度 {confidence:.0%} 低于要求，已仅保存图片 {s}（未融合），立即继续下一步。"
                 ))
+                self.after(0, self._close_auto_capture_popup)
                 return True
             if not self._no_target_skip_active:
                 self.auto_capture_failed = True
                 self.after(0, lambda: self.status.set("自动抓拍未识别到 body/wing，未保存该帧并已停止后续运动。"))
+                self.after(0, self._close_auto_capture_popup)
                 return False
             remaining = no_target_deadline - time.monotonic()
             if remaining <= 0:
@@ -2092,6 +2145,7 @@ class PiperPanel(tk.Tk):
                     f"位置 {i}：{self._no_target_wait_s_active:.1f} 秒内未发现合格目标"
                     f"（最高 {best_confidence:.0%}），已保存非目标帧 {s}（未融合），继续下一步。"
                 ))
+                self.after(0, self._close_auto_capture_popup)
                 return True
             self.after(0, lambda i=sequence_index, seconds=max(0.0, remaining): self.status.set(
                 f"位置 {i}：目标未达到 {self._min_target_confidence_active:.0%}，继续检测（剩余 {seconds:.1f} 秒）…"
@@ -2117,6 +2171,7 @@ class PiperPanel(tk.Tk):
         if int(mask.sum()) < 100:
             self.auto_capture_failed = True
             self.after(0, lambda: self.status.set("SAM2 掩码过小，未保存该帧并已停止后续运动。"))
+            self.after(0, self._close_auto_capture_popup)
             return False
         scan = self._ensure_capture_scan()
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -2141,6 +2196,7 @@ class PiperPanel(tk.Tk):
             detail = (result.stderr or result.stdout).strip()[-500:]
             self.auto_capture_failed = True
             self.after(0, lambda: self.status.set(f"点云生成失败：{detail}"))
+            self.after(0, self._close_auto_capture_popup)
             return False
         fusion_message = self._fusion_message(scan, stamp)
         self.after(0, lambda message=fusion_message: self.status.set(f"位置 {sequence_index}：{message}"))
@@ -2148,6 +2204,7 @@ class PiperPanel(tk.Tk):
         # present. Starting an empty Open3D viewer could make it exit before
         # the first capture arrived.
         self.after(0, lambda: self._start_auto_cloud_viewer(scan))
+        self.after(0, self._close_auto_capture_popup)
         return True
 
     def _run_all_with_auto_capture_worker(self):
@@ -2214,6 +2271,7 @@ class PiperPanel(tk.Tk):
         # Block stale queued display callbacks before releasing the camera.
         self.auto_camera_enabled = False
         self.auto_camera_display_frame = None
+        self.after(0, self._close_auto_capture_popup)
         if self.auto_cloud_process and self.auto_cloud_process.poll() is None:
             self.auto_cloud_process.terminate()
         if self.remote_camera:
@@ -2368,6 +2426,7 @@ class PiperPanel(tk.Tk):
 
     def close(self):
         self.routine_running = False
+        self._close_auto_capture_popup()
         if self.tracer:
             self.tracer.close()
         if self.remote_camera:
