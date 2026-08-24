@@ -682,7 +682,7 @@ class PiperPanel(tk.Tk):
                 threading.Thread(target=self._cloud_preview_worker, args=(fused,), daemon=True).start()
         self.after(1500, self._refresh_cloud_preview)
 
-    def _cloud_preview_worker(self, cloud_path):
+    def _cloud_preview_worker(self, cloud_path, show_popup=False):
         try:
             import open3d as o3d
             cloud = o3d.io.read_point_cloud(str(cloud_path))
@@ -697,11 +697,11 @@ class PiperPanel(tk.Tk):
                 colors = colors[indices]
             else:
                 colors = np.full((len(points), 3), .82)
-            self.after(0, lambda: self._apply_cloud_preview(points, colors, cloud_path.name))
+            self.after(0, lambda: self._apply_cloud_preview(points, colors, cloud_path.name, show_popup))
         except Exception:
             return
 
-    def _apply_cloud_preview(self, points, colors, name):
+    def _apply_cloud_preview(self, points, colors, name, show_popup=False):
         if not self.winfo_exists() or self.cloud_axes is None or self.cloud_canvas is None:
             return
         # Preserve the user's current interactive 3D camera angle on refresh.
@@ -718,8 +718,16 @@ class PiperPanel(tk.Tk):
         self.cloud_axes.view_init(elev=elev, azim=azim)
         self.cloud_canvas.draw_idle()
         self.last_cloud_points, self.last_cloud_colors = points, colors
+        if show_popup:
+            self.open_cloud_popup()
         if self.cloud_popup and self.cloud_popup.winfo_exists():
             self._draw_cloud_popup()
+
+    def _show_fused_cloud_window(self, scan):
+        """Refresh and raise the fused-cloud popup after every completed frame."""
+        fused = Path(scan) / "fusion" / "fused_icp.ply"
+        if fused.is_file():
+            threading.Thread(target=self._cloud_preview_worker, args=(fused, True), daemon=True).start()
 
     def open_cloud_popup(self):
         if self.last_cloud_points is None:
@@ -2159,7 +2167,7 @@ class PiperPanel(tk.Tk):
                 self.after(0, lambda i=sequence_index, text=message: self.status.set(
                     f"位置 {i}：后台融合完成；{text}"
                 ))
-                self.after(0, lambda value=scan: self._start_auto_cloud_viewer(value))
+                self.after(0, lambda value=scan: self._show_fused_cloud_window(value))
             with self.fusion_lock:
                 self.fusion_pending = max(0, self.fusion_pending - 1)
                 pending = self.fusion_pending
