@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Local environments and IDE state
+.venv/
+venv/
+env/
+.vscode/
+.idea/
+.codex/
+.agents/
+
+# Local operator settings and motion plans
+motion_records.json
+vehicle_motion_records.json
+auto_capture_plans.json
+control_settings.json
+
+# Captured RGB/depth, masks, point clouds and runtime logs
+scan_*/
+images/
+depth/
+masks/
+preview/
+clouds/
+fusion/
+non_targets/
+*.ply
+*.pcd
+*.bag
+*.log
+
+# Operating-system files
+.DS_Store
+Thumbs.db
