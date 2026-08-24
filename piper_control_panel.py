@@ -830,11 +830,14 @@ class PiperPanel(tk.Tk):
         ttk.Label(settings, text="最低识别度(%)：").grid(row=1, column=4, sticky="e", padx=(6, 2), pady=(5, 0))
         ttk.Spinbox(settings, from_=1, to=100, increment=1, textvariable=self.min_target_confidence, width=5).grid(row=1, column=5, sticky="w", pady=(5, 0))
         ttk.Button(settings, text="保存全局设置", command=self._save_capture_detection_settings).grid(row=1, column=6, columnspan=3, sticky="ew", padx=(8, 0), pady=(5, 0))
+        ttk.Checkbutton(settings, text="安全确认：机械臂周围无人、无障碍物，可随时急停", variable=self.safety_ok).grid(
+            row=2, column=0, columnspan=9, sticky="w", pady=(5, 0)
+        )
         ttk.Label(outer, textvariable=self.flange_pose, foreground="#204a87", wraplength=680).grid(row=3, column=0, columnspan=6, pady=(0, 10), sticky="w")
         ttk.Label(outer, textvariable=self.camera_pose, foreground="#4e6f30", wraplength=680).grid(row=4, column=0, columnspan=5, pady=(0, 8), sticky="w")
         ttk.Button(outer, text="重设小车初始坐标", command=self.reset_camera_origin).grid(row=4, column=5, padx=4, pady=(0, 8))
         ttk.Label(outer, text="末端控制（相对机械臂底座的标定 TCP；XYZ:mm，RPY:°）", font=("Sans", 10, "bold")).grid(row=5, column=0, columnspan=6, sticky="w", pady=(0, 3))
-        motion_pages = ttk.Notebook(outer, width=980, height=360)
+        motion_pages = ttk.Notebook(outer, width=980, height=520)
         motion_pages.grid(row=6, column=0, columnspan=6, sticky="nsew", pady=(0, 6))
         discrete_page = ttk.Frame(motion_pages, padding=20)
         continuous_page = ttk.Frame(motion_pages, padding=20)
@@ -863,33 +866,6 @@ class PiperPanel(tk.Tk):
         ttk.Button(capture_actions, text="启动远程 ZED 抓拍", command=self.launch_remote_capture).grid(row=0, column=0, sticky="ew", padx=(0, 3))
         ttk.Button(capture_actions, text="选择历史点云继续融合", command=self.select_existing_capture_scan).grid(row=0, column=1, sticky="ew", padx=3)
         ttk.Button(capture_actions, text="新建点云会话", command=self.start_new_capture_scan).grid(row=0, column=2, sticky="ew", padx=(3, 0))
-        joint_panel = ttk.LabelFrame(outer, text="关节控制", padding=(5, 3))
-        joint_panel.grid(row=8, column=0, columnspan=6, sticky="w")
-        ttk.Label(joint_panel, text="关节", style="Joint.TLabel").grid(row=0, column=0, padx=3)
-        ttk.Label(joint_panel, text="当前角度 (°)", style="Joint.TLabel").grid(row=0, column=1, padx=3)
-        ttk.Label(joint_panel, text="目标角度 (°)", style="Joint.TLabel").grid(row=0, column=2, columnspan=2, padx=3)
-        ttk.Label(joint_panel, text="相对变化 (°)", style="Joint.TLabel").grid(row=0, column=4, padx=3)
-        ttk.Label(joint_panel, text="应用", style="Joint.TLabel").grid(row=0, column=5, padx=3)
-        for index, name in enumerate(JOINT_NAMES):
-            row = index + 1
-            ttk.Label(joint_panel, text=name, style="Joint.TLabel").grid(row=row, column=0, padx=3, pady=0)
-            label = ttk.Label(joint_panel, text="--", width=9, style="Joint.TLabel")
-            label.grid(row=row, column=1, padx=3, pady=0)
-            self.current_labels.append(label)
-            low, high = JOINT_LIMITS[index]
-            slider = ttk.Scale(joint_panel, from_=low, to=high, length=180,
-                               command=lambda value, i=index: self.slider_changed(i, value))
-            slider.grid(row=row, column=2, padx=(3, 5), pady=0)
-            self.sliders.append(slider)
-            ttk.Label(joint_panel, textvariable=self.targets[index], width=8, style="Joint.TLabel").grid(row=row, column=3, padx=(0, 3), pady=0)
-            ttk.Entry(joint_panel, textvariable=self.relative_inputs[index], width=6, style="Joint.TEntry").grid(row=row, column=4, padx=3, pady=0)
-            ttk.Button(joint_panel, text="应用", style="Joint.TButton", command=lambda i=index: self.apply_relative(i)).grid(row=row, column=5, padx=3, pady=0)
-        ttk.Separator(outer).grid(row=9, column=0, columnspan=6, sticky="ew", pady=5)
-        ttk.Checkbutton(outer, text="我已确认机械臂周围无人、无障碍物，且可随时按下实体急停", variable=self.safety_ok).grid(row=10, column=0, columnspan=6, sticky="w")
-        ttk.Button(outer, text="使能电机（不会运动）", command=self.enable_motors).grid(row=11, column=0, columnspan=6, sticky="ew", pady=(4, 2))
-        ttk.Button(outer, text="恢复初始姿态（零位，当前速度）", command=self.move_home).grid(row=12, column=0, columnspan=6, sticky="ew", pady=2)
-        ttk.Button(outer, text="发送低速目标（当前速度）", command=self.send_target).grid(row=13, column=0, columnspan=6, sticky="ew")
-        ttk.Label(outer, text="连续运动每次 +/- 为 XYZ 10 mm、姿态 1°；滑块松开时执行。速度由上方“应用速度”设置。", foreground="#555555").grid(row=14, column=0, columnspan=6, pady=(4, 0), sticky="w")
 
     def _build_vehicle_page(self, page):
         """Tracer5 controls embedded in the PiPER window (no second UI)."""
