@@ -1,0 +1,16 @@
+{
+  "roi_x": 610,
+  "roi_y": 237,
+  "roi_width": 421,
+  "roi_height": 413,
+  "total_pixels": 173873,
+  "white_pixels": 70511,
+  "black_pixels": 87362,
+  "white_ratio": 0.405532,
+  "black_ratio": 0.502447,
+  "calibrated_at": "2026-08-24T10:46:53.820047+00:00",
+  "tolerance": 0.2,
+  "white_saturation_max": 150,
+  "white_value_min": 90,
+  "black_value_max": 70
+}

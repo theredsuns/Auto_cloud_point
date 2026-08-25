@@ -1,0 +1,8 @@
+{
+  "vehicle_position_tolerance_cm": 3.0,
+  "vehicle_yaw_tolerance_deg": 1.5,
+  "no_target_wait_s": 1.0,
+  "min_target_confidence_pct": 60.0,
+  "capture_settle_s": 1.6,
+  "auto_open_3d": true
+}

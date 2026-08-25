@@ -1,0 +1,1 @@
+[WARN] [1785379527.106939247] [remote_zed_viewer]: New publisher discovered on topic '/zed_scanner/left_image/compressed', offering incompatible QoS. No messages will be received from it. Last incompatible policy: RELIABILITY

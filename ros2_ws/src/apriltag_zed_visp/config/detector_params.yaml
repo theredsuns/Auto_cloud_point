@@ -1,0 +1,27 @@
+apriltag_detector:
+  ros__parameters:
+    camera_frame: "camera_frame"
+    tag_frame: "tag_36h11_id2"
+    target_tag_id: 2
+    tag_size: 0.06
+    use_direct_camera: true
+    camera_device_id: 0
+    camera_fx: 500.0
+    camera_fy: 500.0
+    camera_cx: 320.0
+    camera_cy: 240.0
+    image_width: 640
+    image_height: 480
+    use_stereo: false
+    publish_tf: true
+    publish_marker: true
+    enable_compensation: true
+    print_precise_pose: true
+    
+    compensation:
+      skew_error_gain_x: 0.001
+      skew_error_gain_y: 0.001
+      skew_error_gain_z: 0.002
+      edge_error_gain_x: 0.005
+      edge_error_gain_y: 0.005
+      edge_error_gain_z: 0.01

@@ -1,0 +1,44 @@
+# ---- Python 运行缓存 / 虚拟环境 ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv-yolo
+.matplotlib/
+.ultralytics/
+
+# ---- 工具/会话缓存 ----
+.agents/
+.codex/
+.ssh_zed_control*
+
+# ---- 独立 git 仓库（单独管理，避免嵌套仓库 gitlink）----
+trance_control/
+arm_control_client/Auto_cloud_point/
+
+# ---- 大体积数据：点云扫描与结果 ----
+point_cloud/datasets/
+point_cloud/object_pointcloud_input/
+point_cloud/object_pointcloud_output/
+point_cloud/online_point_cloud/scan_*/
+point_cloud/three_view_auto/depth/
+point_cloud/three_view_auto/masks/
+point_cloud/three_view_auto/pointcloud/
+point_cloud/three_view_auto/rgb/
+*.rar
+
+# ---- 大体积数据：YOLO 数据集 / 权重 / 依赖库 ----
+yolo_execise/libraries/
+yolo_execise/yolo_body_wing_dataset/
+yolo_execise/yolo_body_wing_classification/dataset/
+yolo_execise/yolo_body_wing_classification/input/
+yolo_execise/yolo_body_wing_classification/runs/
+yolo_execise/yolo_body_wing_classification/yolo11s-cls.pt
+yolo_execise/body.pt
+/best.pt
+my_realsense_data.zip
+runs/
+
+# ---- ROS 2 编译产物 ----
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/

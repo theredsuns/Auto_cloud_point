@@ -1,0 +1,25 @@
+
+远程机运行
+source /opt/ros/humble/setup.bash
+source ~/zed_code/install/setup.bash
+
+export ROS_DOMAIN_ID=36
+export ROS_LOCALHOST_ONLY=0
+
+~/zed_code/build/apriltag_zed_visp/zed_rigid_scanner \
+  --output ~/zed_code/rigid_body.ply \
+  --point-cloud-every 1 \
+  --no-preview \
+  --no-3d
+  
+  本地打开rviz，连接点云话题
+  source /opt/ros/humble/setup.bash
+source /home/nkk/object_seek/ros2_ws/install/setup.bash
+
+export ROS_DOMAIN_ID=36
+export ROS_LOCALHOST_ONLY=0
+
+ros2 topic list | grep zed_scanner
+
+在启动rviz
+rviz2 -d /home/nkk/object_seek/ros2_ws/install/apriltag_zed_visp/share/apriltag_zed_visp/config/zed_scanner.rviz

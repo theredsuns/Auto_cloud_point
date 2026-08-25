@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Match the Tracer5 remote Fast DDS UDP transport on 192.168.50.0/24. -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>Tracer5UDP</transport_id>
+            <type>UDPv4</type>
+            <interfaceWhiteList>
+                <address>192.168.50.169</address>
+                <address>127.0.0.1</address>
+            </interfaceWhiteList>
+            <TTL>1</TTL>
+        </transport_descriptor>
+    </transport_descriptors>
+    <publisher profile_name="default_publisher" is_default_profile="true">
+        <historyMemoryPolicy>DYNAMIC</historyMemoryPolicy>
+    </publisher>
+    <subscriber profile_name="default_subscriber" is_default_profile="true">
+        <historyMemoryPolicy>DYNAMIC</historyMemoryPolicy>
+    </subscriber>
+    <participant profile_name="participant_profile" is_default_profile="true">
+        <rtps>
+            <userTransports>
+                <transport_id>Tracer5UDP</transport_id>
+            </userTransports>
+            <useBuiltinTransports>false</useBuiltinTransports>
+            <!-- Domain 36 uses the standard discovery port 7400 + 250*36. -->
+            <builtin>
+                <initialPeersList>
+                    <locator>
+                        <udpv4>
+                            <address>192.168.50.55</address>
+                            <port>16400</port>
+                        </udpv4>
+                    </locator>
+                </initialPeersList>
+            </builtin>
+        </rtps>
+    </participant>
+</profiles>

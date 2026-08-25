@@ -1,0 +1,62 @@
+=== HOST ===
+ubuntu
+Wed Jul 22 11:58:32 CST 2026
+=== LSUSB ===
+Bus 002 Device 004: ID 2b03:f582 STEREOLABS ZED camera
+Bus 002 Device 003: ID 05e3:0626 Genesys Logic, Inc. USB3.1 Hub
+Bus 002 Device 002: ID 0bda:0489 Realtek Semiconductor Corp. 4-Port USB 3.0 Hub
+Bus 002 Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub
+Bus 001 Device 003: ID 13d3:3549 IMC Networks Bluetooth Radio
+Bus 001 Device 007: ID 1d50:606f OpenMoko, Inc. Geschwister Schneider CAN adapter
+Bus 001 Device 008: ID 1d50:606f OpenMoko, Inc. Geschwister Schneider CAN adapter
+Bus 001 Device 006: ID 05e3:0610 Genesys Logic, Inc. Hub
+Bus 001 Device 005: ID 1d50:606f OpenMoko, Inc. Geschwister Schneider CAN adapter
+Bus 001 Device 004: ID 10c4:ea60 Silicon Labs CP210x UART Bridge
+Bus 001 Device 002: ID 0bda:5489 Realtek Semiconductor Corp. 4-Port USB 2.0 Hub
+Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub
+=== USB TREE ===
+/:  Bus 02.Port 1: Dev 1, Class=root_hub, Driver=tegra-xusb/4p, 10000M
+    |__ Port 1: Dev 2, If 0, Class=Hub, Driver=hub/4p, 10000M
+        |__ Port 4: Dev 3, If 0, Class=Hub, Driver=hub/4p, 5000M
+            |__ Port 1: Dev 4, If 0, Class=Video, Driver=uvcvideo, 5000M
+            |__ Port 1: Dev 4, If 1, Class=Video, Driver=uvcvideo, 5000M
+/:  Bus 01.Port 1: Dev 1, Class=root_hub, Driver=tegra-xusb/4p, 480M
+    |__ Port 2: Dev 2, If 0, Class=Hub, Driver=hub/4p, 480M
+        |__ Port 1: Dev 4, If 0, Class=Vendor Specific Class, Driver=cp210x, 12M
+        |__ Port 4: Dev 6, If 0, Class=Hub, Driver=hub/4p, 480M
+            |__ Port 4: Dev 7, If 0, Class=Vendor Specific Class, Driver=gs_usb, 12M
+            |__ Port 4: Dev 7, If 1, Class=Application Specific Interface, Driver=, 12M
+            |__ Port 2: Dev 8, If 1, Class=Application Specific Interface, Driver=, 12M
+            |__ Port 2: Dev 8, If 0, Class=Vendor Specific Class, Driver=gs_usb, 12M
+        |__ Port 2: Dev 5, If 1, Class=Application Specific Interface, Driver=, 12M
+        |__ Port 2: Dev 5, If 0, Class=Vendor Specific Class, Driver=gs_usb, 12M
+    |__ Port 3: Dev 3, If 0, Class=Wireless, Driver=rtk_btusb, 12M
+    |__ Port 3: Dev 3, If 1, Class=Wireless, Driver=rtk_btusb, 12M
+=== ZED USB SYSFS ===
+device=/sys/bus/usb/devices/2-1.4.1
+manufacturer=Technologies, Inc.
+product=ZED
+speed=5000
+busnum=2
+devnum=4
+=== NETWORK ===
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+can0             DOWN           <NOARP,ECHO> 
+can1             UP             <NOARP,UP,LOWER_UP,ECHO> 
+l4tbr0           DOWN           3e:c7:e7:79:f3:87 <BROADCAST,MULTICAST> 
+can2             DOWN           <NOARP,ECHO> 
+usb0             DOWN           16:ce:a4:e6:91:71 <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+usb1             DOWN           16:ce:a4:e6:91:73 <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+wlan0            UP             1c:ce:51:8e:70:01 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+eth0             UP             48:b0:2d:f7:8d:34 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+can3             UP             <NOARP,UP,LOWER_UP,ECHO> 
+can0 speed=unknown
+can1 speed=unknown
+can2 speed=unknown
+can3 speed=unknown
+eth0 speed=1000
+l4tbr0 speed=unknown
+lo speed=unknown
+usb0 speed=unknown
+usb1 speed=unknown
+wlan0 speed=unknown
