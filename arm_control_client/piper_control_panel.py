@@ -295,6 +295,8 @@ class PiperPanel(tk.Tk):
         self.auto_capture_plan_name = tk.StringVar()
         self.auto_capture_plan_running = False
         self.auto_capture_plan_cancelled = False
+        self.auto_capture_skip_requested = False
+        self.auto_capture_skip_on_fail = tk.BooleanVar(value=True)
         self.can_ready = False
         self.targets = [tk.StringVar(value="--") for _ in range(6)]
         self.current_labels = []
@@ -634,12 +636,16 @@ class PiperPanel(tk.Tk):
             cv2.imwrite(str(scan / "masks" / f"{stamp}.png"), mask.astype(np.uint8) * 255)
             cv2.imwrite(str(scan / "preview" / f"{stamp}.jpg"), preview)
             tcp = module.read_capture_tcp_pose()
+            world_from_camera, vehicle_odom = self._vehicle_world_camera_pose(tcp)
             with (scan / "captures.jsonl").open("a", encoding="utf-8") as manifest:
                 manifest.write(json.dumps({
                     "id": stamp,
-                    "pose_source": "calibrated_tcp" if tcp else "unavailable",
-                    "world_from_camera": tcp["world_from_camera"] if tcp else None,
+                    "pose_source": ("calibrated_tcp+vehicle_odom" if world_from_camera is not None
+                                    else "calibrated_tcp" if tcp else "unavailable"),
+                    "world_from_camera": (world_from_camera if world_from_camera is not None
+                                          else (tcp["world_from_camera"] if tcp else None)),
                     "calibrated_tcp": tcp,
+                    "vehicle_odom": vehicle_odom,
                 }, ensure_ascii=False) + "\n")
             pipeline = ONLINE_SCAN_ROOT / "online_icp_pipeline.py"
             result = subprocess.run([sys.executable, str(pipeline), str(scan), stamp], text=True, capture_output=True)
@@ -1109,9 +1115,16 @@ class PiperPanel(tk.Tk):
         ttk.Button(saved, text="加载规划", command=self._load_named_auto_capture_plan).pack(side="left", padx=2)
         ttk.Button(saved, text="删除保存", command=self._delete_named_auto_capture_plan).pack(side="left", padx=(2, 0))
         self._refresh_saved_auto_capture_plan_picker()
-        ttk.Button(page, text="运行规划", command=self._run_auto_capture_plan).grid(
-            row=5, column=0, sticky="ew", ipady=4, pady=(6, 0)
+        run_row = ttk.Frame(page); run_row.grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(run_row, text="运行规划", command=self._run_auto_capture_plan).pack(
+            side="left", fill="x", expand=True, ipady=4
         )
+        ttk.Button(run_row, text="跳过当前步骤", command=self._skip_current_auto_capture_step).pack(
+            side="left", fill="x", expand=True, ipady=4, padx=(6, 0)
+        )
+        ttk.Checkbutton(
+            run_row, text="失败自动跳过", variable=self.auto_capture_skip_on_fail
+        ).pack(side="left", padx=(8, 0))
 
     def _generate_auto_capture_plan(self):
         """Build the plan from the existing record pages without new input."""
@@ -1294,7 +1307,11 @@ class PiperPanel(tk.Tk):
             "确认自动抓拍规划",
             f"将按当前排序执行 {len(self.auto_capture_plan)} 个步骤，其中相机抓拍 {camera_steps} 次。\n"
             "相机步骤：机械臂到位 → 等待 2 秒 → YOLO/SAM2 抓拍并融合点云。\n"
-            "小车步骤：到达对应目标后才会继续。可用停止按钮或小车即停中断。\n\n确认现场安全？",
+            "小车步骤：到达对应目标后才会继续。\n"
+            "运行中可随时点『跳过当前步骤』；"
+            + ("失败步骤将自动跳过并继续（可在按钮旁关闭）。" if self.auto_capture_skip_on_fail.get()
+               else "失败步骤会停止规划（可勾选『失败自动跳过』改为继续）。")
+            + "\n可用停止按钮或小车即停中断。\n\n确认现场安全？",
             parent=self,
         ):
             return
@@ -1305,24 +1322,50 @@ class PiperPanel(tk.Tk):
         self.routine_running = True
         self.routine_auto_capture = True
         self.auto_capture_failed = False
+        self.auto_capture_skip_requested = False
+        self._skip_on_fail_active = bool(self.auto_capture_skip_on_fail.get())
         self._set_auto_capture_end_reason("运行中")
         plan = [dict(step) for step in self.auto_capture_plan]
         speed = (float(self.vehicle_v.get()), float(self.vehicle_w.get()))
         self.status.set("自动抓拍规划已启动：正在准备远程 ZED…")
         threading.Thread(target=self._run_auto_capture_plan_worker, args=(plan, speed), daemon=True).start()
 
+    def _skip_current_auto_capture_step(self):
+        """Abandon the current step at the next safe checkpoint and continue."""
+        if not self.auto_capture_plan_running and not self.vehicle_auto_capture_running:
+            self.status.set("跳过请求无效：当前没有运行中的规划。")
+            return
+        self.auto_capture_skip_requested = True
+        self.status.set(
+            "已请求跳过当前步骤：小车步骤会立即停车跳过；"
+            "机械臂步骤会在当前指令结束（或超时）后的最近检查点跳过。"
+        )
+
     def _run_auto_capture_plan_worker(self, plan, vehicle_speed):
         completed = False
+        skipped = []
         try:
             if not self._prepare_auto_capture():
                 self._set_auto_capture_end_reason("远程 ZED 准备失败（查看相机状态）")
                 return
             captures = 0
+
+            def note_skip(step_index, reason):
+                skipped.append(f"步骤 {step_index}（{reason}）")
+                self._set_auto_capture_phase(f"步骤 {step_index}/{len(plan)} 已跳过：继续下一步")
+                self.after(0, lambda i=step_index, r=reason: self.status.set(
+                    f"自动抓拍规划：步骤 {i} 已跳过（{r}），继续执行后续步骤。"
+                ))
+
             for index, step in enumerate(plan, 1):
                 if not self.routine_running or self.auto_capture_plan_cancelled:
                     self._set_auto_capture_end_reason("运行中被取消")
                     self.after(0, lambda: self.status.set("自动抓拍规划已停止。"))
                     return
+                if self.auto_capture_skip_requested:
+                    self.auto_capture_skip_requested = False
+                    note_skip(index, "手动跳过")
+                    continue
                 if step["kind"] == "camera":
                     target = list(step["pose"])
                     self._set_auto_capture_phase(f"机械臂运动：规划步骤 {index}/{len(plan)}")
@@ -1331,15 +1374,24 @@ class PiperPanel(tk.Tk):
                     # piper_safe_end_pose blocks until its CAN end-pose
                     # feedback confirms arrival, so no ROS TCP topic wait is
                     # required here.
+                    if self.auto_capture_skip_requested:
+                        # Skip was pressed while the blocking arm command ran.
+                        self.auto_capture_skip_requested = False
+                        note_skip(index, "手动跳过（机械臂指令已结束）")
+                        continue
                     if result.returncode:
                         detail = (result.stderr or result.stdout).strip().replace("\n", " ")[-120:]
+                        if self._skip_on_fail_active:
+                            note_skip(index, f"机械臂未到位{('：' + detail) if detail else ''}")
+                            continue
                         self._set_auto_capture_end_reason(
                             f"步骤 {index}/{len(plan)}：机械臂未到位{('：' + detail) if detail else ''}"
                         )
                         self.after(0, lambda i=index: self.status.set(f"自动抓拍规划：第 {i} 步机械臂未确认到位，已停止。"))
                         return
                     deadline = time.monotonic() + self._capture_settle_s_active
-                    while self.routine_running and not self.auto_capture_plan_cancelled and time.monotonic() < deadline:
+                    while (self.routine_running and not self.auto_capture_plan_cancelled
+                           and not self.auto_capture_skip_requested and time.monotonic() < deadline):
                         self._set_auto_capture_phase("机械臂到位：抓拍停顿计时")
                         self._set_capture_countdown("抓拍停顿", deadline - time.monotonic(), self._capture_settle_s_active)
                         self._refresh_auto_camera(f"step {index}: stable 2 seconds")
@@ -1347,14 +1399,34 @@ class PiperPanel(tk.Tk):
                     if not self.routine_running or self.auto_capture_plan_cancelled:
                         self._set_auto_capture_end_reason(f"步骤 {index}/{len(plan)}：抓拍停顿时被取消")
                         return
+                    if self.auto_capture_skip_requested:
+                        self.auto_capture_skip_requested = False
+                        note_skip(index, "手动跳过（未抓拍）")
+                        continue
                     captures += 1
-                    if not self._capture_auto_frame(captures):
+                    capture_ok = self._capture_auto_frame(captures)
+                    if self.auto_capture_skip_requested and capture_ok:
+                        # Skip pressed during SAM2/save; this step is already
+                        # finished, so consume it instead of skipping the next.
+                        self.auto_capture_skip_requested = False
+                    if not capture_ok:
+                        if self._skip_on_fail_active:
+                            self.auto_capture_failed = False
+                            note_skip(index, "抓拍/识别失败（查看相机状态）")
+                            continue
                         self._set_auto_capture_end_reason(
                             f"步骤 {index}/{len(plan)}：抓拍/识别失败（查看相机状态）"
                         )
                         return
                 else:
-                    if not self._run_auto_capture_vehicle_step(step["record"], index, len(plan), *vehicle_speed):
+                    outcome = self._run_auto_capture_vehicle_step(step["record"], index, len(plan), *vehicle_speed)
+                    if outcome == "skip":
+                        note_skip(index, "手动跳过")
+                        continue
+                    if not outcome:
+                        if self._skip_on_fail_active:
+                            note_skip(index, "小车步骤未完成（详见小车状态）")
+                            continue
                         return
             self.after(0, lambda: self.status.set("自动抓拍规划完成：正在恢复机械臂初始零位…"))
             args = " ".join(f"{value:.3f}" for value in HOME_JOINTS_DEG)
@@ -1380,7 +1452,10 @@ class PiperPanel(tk.Tk):
                 self._close_auto_capture_views()
             if completed:
                 self._set_auto_capture_phase("规划已完成：后台融合可继续")
-                self._set_auto_capture_end_reason(f"已完成，抓拍 {captures} 帧")
+                summary = f"已完成，抓拍 {captures} 帧"
+                if skipped:
+                    summary += f"，跳过 {len(skipped)} 步：" + "；".join(skipped)
+                self._set_auto_capture_end_reason(summary)
             elif self.auto_capture_failed:
                 self._set_auto_capture_phase("规划异常结束：请查看上方状态")
                 self._set_auto_capture_end_reason("异常退出（请查看上方状态）")
@@ -1396,8 +1471,17 @@ class PiperPanel(tk.Tk):
             self.after(0, self.refresh_status)
 
     def _run_auto_capture_vehicle_step(self, record, index, total, linear, angular):
-        """One vehicle waypoint for the combined plan; returns only after arrival."""
+        """One vehicle waypoint for the combined plan; returns only after arrival.
+
+        Returns True on arrival, False on failure, or the string "skip" when
+        the user asked to abandon this step and keep the plan running.
+        """
         from tracer5_control_panel import Pose2D, wrap_angle
+        if self.auto_capture_skip_requested:
+            self.auto_capture_skip_requested = False
+            self._set_auto_capture_phase(f"步骤 {index}/{total}：手动跳过")
+            self._set_vehicle_motion_detail(f"步骤 {index}/{total} 已手动跳过，继续下一步")
+            return "skip"
         pose, origin, _source, stamp, _state, _name = self.tracer.snapshot()
         if pose is None or origin is None or time.monotonic() - stamp > 1.0:
             self._set_auto_capture_end_reason(f"步骤 {index}/{total}：小车定位不可用")
@@ -1447,6 +1531,13 @@ class PiperPanel(tk.Tk):
             if not self.routine_running or self.auto_capture_plan_cancelled or self.vehicle_route_cancelled:
                 self.tracer.stop_all()
                 return False
+            if self.auto_capture_skip_requested:
+                self.auto_capture_skip_requested = False
+                self.tracer.stop_all()
+                self.vehicle_route_running = False
+                self._set_auto_capture_phase(f"步骤 {index}/{total}：手动跳过，小车已停车")
+                self._set_vehicle_motion_detail(f"步骤 {index}/{total} 已手动跳过，继续下一步")
+                return "skip"
             current_pose, _origin, _source, newest, state, _name = self.tracer.snapshot()
             now = time.monotonic()
             if reconnect_deadline is not None:
@@ -2486,15 +2577,73 @@ class PiperPanel(tk.Tk):
                 ))
             self.fusion_queue.task_done()
 
-    def _capture_auto_frame(self, sequence_index):
-        """Capture a target frame, or record a non-target view and continue."""
+    def _vehicle_world_camera_pose(self, tcp):
+        """Compose the calibrated TCP camera pose with the live vehicle pose.
+
+        ``tcp["world_from_camera"]`` places the camera in the arm-base frame,
+        which is fixed only while the vehicle stands still.  When a plan also
+        drives the vehicle, compose it with the EKF vehicle pose so the camera
+        is expressed in the odometry world frame and later frames still align:
+        world_from_camera = odom_from_vehicle * vehicle_from_armbase * armbase_from_camera.
+        Returns (matrix, vehicle_info) for the manifest, or (None, None) when
+        either input is unavailable (the caller then falls back to TCP-only).
+        """
+        if not tcp or not tcp.get("world_from_camera"):
+            return None, None
         module = self.capture_module
+        position = orientation = None
+        source = None
+        vehicle = self.imu.current_pose() if getattr(self, "imu", None) else None
+        if vehicle is not None:
+            orientation, position = vehicle
+            source = "imu_odom_3d"
+        else:
+            pose, _origin, _src, stamp, _state, _name = self.tracer.snapshot()
+            if pose is not None and time.monotonic() - stamp <= 1.0:
+                position = [pose.x, pose.y, 0.0]
+                orientation = _rpy_deg_to_quat(0.0, 0.0, math.degrees(pose.yaw))
+                source = "tracer_odom_2d"
+        if position is None or orientation is None:
+            return None, None
+        odom_from_vehicle = np.asarray(
+            module.tcp_pose_to_matrix(position, orientation), dtype=np.float64)
+        vehicle_from_armbase = np.eye(4)
+        # Same rigid mount assumption as _update_camera_pose: the arm base is
+        # a fixed axis-aligned offset above the vehicle/IMU origin.
+        vehicle_from_armbase[:3, 3] = ARM_BASE_FROM_IMU_M
+        armbase_from_camera = np.asarray(tcp["world_from_camera"], dtype=np.float64)
+        world_from_camera = odom_from_vehicle @ vehicle_from_armbase @ armbase_from_camera
+        info = {
+            "source": source,
+            "position_m": [float(value) for value in position],
+            "quaternion_xyzw": [float(value) for value in orientation],
+        }
+        # json.dumps cannot serialise a numpy matrix; store plain lists.
+        return world_from_camera.tolist(), info
+
+    def _capture_auto_frame(self, sequence_index):
+        """Capture a target frame, or record a non-target view and continue.
+
+        Returns the string "skip" (truthy) when the user abandoned this frame,
+        so callers treat it like a success and keep running the plan.
+        """
+        module = self.capture_module
+        if self.auto_capture_skip_requested:
+            self.auto_capture_skip_requested = False
+            self._set_auto_capture_phase(f"位置 {sequence_index}：抓拍已手动跳过")
+            self.after(0, self._close_auto_capture_popup)
+            return "skip"
         self._set_auto_capture_phase("拍摄并进行 YOLO 识别")
         self._set_capture_countdown("抓拍计时", 0.0, self._capture_settle_s_active)
         no_target_deadline = time.monotonic() + self._no_target_wait_s_active
         while True:
             if not self.routine_running:
                 return False
+            if self.auto_capture_skip_requested:
+                self.auto_capture_skip_requested = False
+                self._set_auto_capture_phase(f"位置 {sequence_index}：抓拍已手动跳过")
+                self.after(0, self._close_auto_capture_popup)
+                return "skip"
             bgr, depth = self.remote_camera.capture_frame()
             if bgr is None or depth is None:
                 self.auto_capture_failed = True
@@ -2579,11 +2728,15 @@ class PiperPanel(tk.Tk):
         cv2.imwrite(str(scan / "masks" / f"{stamp}.png"), mask.astype(np.uint8) * 255)
         cv2.imwrite(str(scan / "preview" / f"{stamp}.jpg"), preview)
         tcp = module.read_capture_tcp_pose()
+        world_from_camera, vehicle_odom = self._vehicle_world_camera_pose(tcp)
         with (scan / "captures.jsonl").open("a", encoding="utf-8") as manifest:
             manifest.write(json.dumps({"id": stamp,
-                "pose_source": "calibrated_tcp" if tcp else "unavailable",
-                "world_from_camera": tcp["world_from_camera"] if tcp else None,
-                "calibrated_tcp": tcp}, ensure_ascii=False) + "\n")
+                "pose_source": ("calibrated_tcp+vehicle_odom" if world_from_camera is not None
+                                else "calibrated_tcp" if tcp else "unavailable"),
+                "world_from_camera": (world_from_camera if world_from_camera is not None
+                                      else (tcp["world_from_camera"] if tcp else None)),
+                "calibrated_tcp": tcp,
+                "vehicle_odom": vehicle_odom}, ensure_ascii=False) + "\n")
         self._enqueue_fusion(scan, stamp, sequence_index)
         return True
 
@@ -2825,9 +2978,10 @@ class PiperPanel(tk.Tk):
         self.destroy()
 
     def run_remote(self, remote_command):
-        # Direct CAN Cartesian moves wait for real end-pose feedback; allow
-        # their guarded 12 s settle window plus SSH overhead.
-        return subprocess.run(["ssh", "-o", "BatchMode=yes", REMOTE_HOST, remote_command], text=True, capture_output=True, timeout=40)
+        # Direct CAN Cartesian moves wait for real end-pose feedback with a
+        # distance-dependent settle window (12 s + 0.03 s/mm) that can extend
+        # while the arm is still moving; allow that plus SSH overhead.
+        return subprocess.run(["ssh", "-o", "BatchMode=yes", REMOTE_HOST, remote_command], text=True, capture_output=True, timeout=120)
 
     def _configured_speed(self):
         try:

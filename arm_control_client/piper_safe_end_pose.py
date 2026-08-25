@@ -41,11 +41,22 @@ def send_pose(arm, values, cycles=100):
         time.sleep(0.01)
 
 
-def wait_for_pose(arm, values, require_orientation=True):
+def wait_for_pose(arm, values, require_orientation=True, travel_budget_s=None):
+    """Wait for arrival; extend the deadline while the end pose still moves.
+
+    ``travel_budget_s`` adds distance-dependent time for long Cartesian
+    moves.  The wall clock is also extended whenever the pose keeps changing
+    (>0.2 mm in 0.5 s), so a slow-but-healthy motion is never misjudged as
+    "not reached" while truly stalled motion still times out.
+    """
     deadline = time.monotonic() + SETTLE_TIMEOUT_SECONDS
+    if travel_budget_s:
+        deadline += travel_budget_s
     final = None
     position_error = float("inf")
     angle_error = float("inf")
+    previous = None
+    previous_at = None
     while time.monotonic() < deadline:
         final_raw = arm.GetArmEndPoseMsgs().end_pose
         final = [final_raw.X_axis / 1000.0, final_raw.Y_axis / 1000.0,
@@ -57,6 +68,15 @@ def wait_for_pose(arm, values, require_orientation=True):
             not require_orientation or angle_error <= ANGLE_TOLERANCE_DEG
         ):
             break
+        now = time.monotonic()
+        if previous is not None and now - previous_at >= 0.5:
+            moved = max(abs(a - b) for a, b in zip(previous, final))
+            if moved > 0.2:
+                # Still making progress: grant another settle window.
+                deadline = now + SETTLE_TIMEOUT_SECONDS
+            previous, previous_at = final, now
+        elif previous is None:
+            previous, previous_at = final, now
         time.sleep(0.1)
     return final, position_error, angle_error
 
@@ -109,7 +129,13 @@ def main():
         # waypoint is sent after an error, so the final feedback reports the
         # pose at which the arm actually stopped.
         send_pose(arm, args.pose)
-        final, position_error, angle_error = wait_for_pose(arm, args.pose)
+        travel_mm = max(abs(a - b) for a, b in zip(args.pose[:3], current[:3]))
+        # 5 % speed moves roughly 15-30 mm/s, so 0.03 s/mm covers the real
+        # travel time without the old fixed 12 s cap; in-progress detection
+        # above extends the wait further if the arm is still moving.
+        travel_budget_s = travel_mm * 0.03
+        final, position_error, angle_error = wait_for_pose(
+            arm, args.pose, travel_budget_s=travel_budget_s)
         print("[feedback] final base/flange=", [round(value, 3) for value in final])
         if position_error > POSITION_TOLERANCE_MM or angle_error > ANGLE_TOLERANCE_DEG:
             current_state = arm.GetArmStatus().arm_status.arm_status
